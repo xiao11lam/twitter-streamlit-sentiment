@@ -141,9 +141,25 @@ def get_comment_sentiment(comment):
 
 def output_builder1(worker_index, worker_count):
     con = st.empty()
+    
+    # Initialize history list in session state if it doesn't exist
+    if 'comment_history' not in st.session_state:
+        st.session_state.comment_history = []
+        
     def write_comments(sentiment__comment):
         sentiment, comment = sentiment__comment
+        
+        # Add comment to history list
+        st.session_state.comment_history.append({"sentiment": sentiment, "comment": comment})
+        
+        # Show the current comment
         con.write(f'sentiment: {sentiment}, comment: {comment}')
+        
+        # Display history table
+        with st.container():
+            st.subheader("Comment History")
+            history_df = pd.DataFrame(st.session_state.comment_history)
+            st.dataframe(history_df, use_container_width=True)
 
     return write_comments
 
@@ -184,30 +200,37 @@ def join_complete(all_words):
 
 def output_builder2(worker_index, worker_count):
     placeholder = st.empty()
+
     def write_to_dashboard(key__data):
         key, data = key__data
         with placeholder.container():
-            fig, axes = plt.subplots(1, 3)
-            i = 0
-            for sentiment, words in data.items():
-                # Create and generate a word cloud image:
-                # Using generate_from_frequencies instead which is more robust
-                word_dict = {x[0]: x[1] for x in words}
-                wc = WordCloud().generate_from_frequencies(word_dict)
+            st.subheader(f"Sentiment Analysis Results for: {key}")  # Add a header
 
-                # Display the generated image:
-                axes[i].imshow(wc)
-                axes[i].set_title(sentiment)
-                axes[i].axis("off")
-                axes[i].set_facecolor('none')
-                i += 1
-            st.pyplot(fig)
+            for sentiment, words in data.items():
+                st.write(f"**{sentiment.capitalize()} Words:**")  # Sentiment header
+
+                if words:  # Check if there are any words
+                    for word, count in words:
+                        st.write(f"- {word}: {count}")  # Display each word and count
+                else:
+                    st.write("  No significant words found for this sentiment.")
+                st.write("---")  # Separator between sentiments
 
     return write_to_dashboard
 
 if __name__ == "__main__":
 
     st.title("Instagram Comments Analysis")
+    
+    # Initialize comment history in session state if not exists
+    if 'comment_history' not in st.session_state:
+        st.session_state.comment_history = []
+        
+    # Display history table if there are comments
+    if st.session_state.comment_history:
+        with st.expander("View Comment History", expanded=True):
+            history_df = pd.DataFrame(st.session_state.comment_history)
+            st.dataframe(history_df, use_container_width=True)
 
     flow = Dataflow()
     flow.input("input", ManualInputConfig(input_builder))
@@ -226,7 +249,7 @@ if __name__ == "__main__":
     flow.map(sort_dict)
     flow.reduce("join", join, join_complete)
     flow.inspect(print)
-    # flow.capture(ManualOutputConfig(output_builder2))
+    flow.capture(ManualOutputConfig(output_builder2))
 
     search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
     
