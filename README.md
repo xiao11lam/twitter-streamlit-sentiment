@@ -290,24 +290,33 @@ Give us a star on [GitHub](https://github.com/bytewax/bytewax) to support the pr
 
 ## Running the Application
 
-1. Start the Streamlit application:
+1. Create a `.env` file with the following content:
+   ```
+   INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token
+   OPENAI_API_KEY=your_openai_api_key
+   ```
+
+2. Start the Streamlit application:
    ```bash
    streamlit run dataflow.py
    ```
 
-2. Open your browser and navigate to http://localhost:8501
+3. Open your browser and navigate to http://localhost:8501
 
-3. Enter your search terms in the input field and click "Click to Start Analyzing Tweets"
+4. Enter your search terms in the input field and click "Click to Start Analyzing Instagram Comments"
 
-4. The application will display tweets and their sentiment analysis in real-time
+5. The application will display Instagram comments and their sentiment analysis in real-time
 
 ## Docker Support
 
 If you prefer to run the application in a Docker container:
 
 ```bash
-docker build -t twitter-sentiment .
-docker run -p 8501:8501 -e TWITTER_BEARER_TOKEN=your_twitter_bearer_token twitter-sentiment
+docker build -t instagram-sentiment .
+docker run -p 8501:8501 \
+  -e INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token \
+  -e OPENAI_API_KEY=your_openai_api_key \
+  instagram-sentiment
 ```
 
 ## Project Structure

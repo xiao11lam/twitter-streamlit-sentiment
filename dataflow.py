@@ -9,17 +9,15 @@ from bytewax.execution import run_main
 from bytewax.window import TumblingWindowConfig, SystemClockConfig
 
 import spacy
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 import streamlit as st
-import numpy as np
-from scipy.special import softmax
 import pandas as pd
 import json
 import requests
 from dotenv import load_dotenv
 import os
+import openai
 
 from contractions import contractions
 
@@ -34,11 +32,8 @@ sw_spacy = en.Defaults.stop_words
 # load contractions and compile regex
 pattern = re.compile(r'\b(?:{0})\b'.format('|'.join(contractions.keys())))
 
-# load sentiment analysis model
-MODEL = "model/"
-tokenizer = AutoTokenizer.from_pretrained(MODEL)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL)
-config = AutoConfig.from_pretrained(MODEL)
+# Set up OpenAI API
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # window size in minutes
 WINDOW_SIZE = 1
@@ -113,19 +108,35 @@ def clean_comment(comment):
 def get_comment_sentiment(comment):
     """
     Determines the sentiment of a comment whether positive, negative or neutral
+    using OpenAI API
     :param comment:
     :return: sentiment and the comment
     """
-    encoded_input = tokenizer(comment, return_tensors='pt')
-    output = model(**encoded_input)
-    scores = output[0][0].detach().numpy()
-    scores = softmax(scores)
-    ranked = np.argsort(scores)
-    ranked = ranked[::-1]
-    sentiment_class = config.id2label[ranked[0]]
-    sentiment_score = scores[ranked[0]]
-
-    return sentiment_class, comment
+    if not comment.strip():
+        return "neutral", comment
+        
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a sentiment analysis tool. Analyze the sentiment of the following text and respond with exactly one word: 'positive', 'negative', or 'neutral'."},
+                {"role": "user", "content": comment}
+            ],
+            max_tokens=10,
+            temperature=0
+        )
+        
+        # Extract the sentiment from the response
+        sentiment = response.choices[0].message.content.strip().lower()
+        
+        # Ensure we only return valid sentiment classes
+        if sentiment not in ["positive", "negative", "neutral"]:
+            sentiment = "neutral"
+            
+        return sentiment, comment
+    except Exception as e:
+        print(f"Error analyzing sentiment: {e}")
+        return "neutral", comment
 
 
 def output_builder1(worker_index, worker_count):
@@ -180,7 +191,9 @@ def output_builder2(worker_index, worker_count):
             i = 0
             for sentiment, words in data.items():
                 # Create and generate a word cloud image:
-                wc = WordCloud().generate(" ".join([" ".join([x[0],]*x[1]) for x in words]))
+                # Using generate_from_frequencies instead which is more robust
+                word_dict = {x[0]: x[1] for x in words}
+                wc = WordCloud().generate_from_frequencies(word_dict)
 
                 # Display the generated image:
                 axes[i].imshow(wc)
@@ -213,13 +226,25 @@ if __name__ == "__main__":
     flow.map(sort_dict)
     flow.reduce("join", join, join_complete)
     flow.inspect(print)
-    flow.capture(ManualOutputConfig(output_builder2))
+    # flow.capture(ManualOutputConfig(output_builder2))
 
     search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
     
     if st.button("Click to Start Analyzing Instagram Comments"):
+        # Check for required API keys
+        if not openai.api_key:
+            st.warning("No OpenAI API key found in environment. Please add it to your .env file as OPENAI_API_KEY.")
+            openai.api_key = st.text_input("Enter your OpenAI API key:", type="password")
+            if not openai.api_key:
+                st.error("OpenAI API key is required for sentiment analysis.")
+                st.stop()
+                
         # Set the Instagram token from .env or let the user input it if not found
         if not INSTAGRAM_ACCESS_TOKEN:
             st.warning("No Instagram access token found in environment. Please add it to your .env file.")
             INSTAGRAM_ACCESS_TOKEN = st.text_input("Enter your Instagram access token:")
+            if not INSTAGRAM_ACCESS_TOKEN:
+                st.error("Instagram access token is required to fetch comments.")
+                st.stop()
+                
         run_main(flow)
