@@ -91,7 +91,11 @@ def get_instagram_comments():
 
 
 def input_builder(worker_index, worker_count, resume_state):
-    return get_instagram_comments()
+    for comment_count, comment_text in get_instagram_comments():
+        # Check if streaming is still enabled
+        if not st.session_state.streaming:
+            break
+        yield comment_count, comment_text
 
 
 def clean_comment(comment):
@@ -230,9 +234,15 @@ if __name__ == "__main__":
     flow.capture(ManualOutputConfig(output_builder1))
 
 
-    search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
+    # search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
     
-    if st.button("Click to Start Analyzing Instagram Comments"):
+    # Add a session state variable to control the stream
+    if 'streaming' not in st.session_state:
+        st.session_state.streaming = False
+    
+    col1, col2 = st.columns(2)
+    
+    if col1.button("Click to Start"):
         # Check for required API keys
         if not openai.api_key:
             st.warning("No OpenAI API key found in environment. Please add it to your .env file as OPENAI_API_KEY.")
@@ -248,5 +258,10 @@ if __name__ == "__main__":
             if not INSTAGRAM_ACCESS_TOKEN:
                 st.error("Instagram access token is required to fetch comments.")
                 st.stop()
-                
+        
+        st.session_state.streaming = True
         run_main(flow)
+        
+    if col2.button("Click to Stop"):
+        st.session_state.streaming = False
+        st.experimental_rerun()
