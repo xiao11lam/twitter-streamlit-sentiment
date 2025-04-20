@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 import os
 import openai
-
+from datetime import datetime
 from contractions import contractions
 
 # load environment variables
@@ -140,29 +140,38 @@ def get_comment_sentiment(comment):
 
 
 def output_builder1(worker_index, worker_count):
-    con = st.empty()
-    
-    # Initialize history list in session state if it doesn't exist
+    # Initialize session state for comment history if it doesn't exist
     if 'comment_history' not in st.session_state:
         st.session_state.comment_history = []
-        
+
+    # Create a single container for the output
+    output_container = st.empty()
+
     def write_comments(sentiment__comment):
         sentiment, comment = sentiment__comment
-        
-        # Add comment to history list
-        st.session_state.comment_history.append({"sentiment": sentiment, "comment": comment})
-        
-        # Show the current comment
-        con.write(f'sentiment: {sentiment}, comment: {comment}')
-        
-        # Display history table
-        with st.container():
-            st.subheader("Comment History")
-            history_df = pd.DataFrame(st.session_state.comment_history)
-            st.dataframe(history_df, use_container_width=True)
+
+        # Add new comment to history (keep only last 50 comments)
+        st.session_state.comment_history.insert(0, {  # Add newest at beginning
+            "sentiment": sentiment,
+            "comment": comment,
+            "time": datetime.now().strftime("%H:%M:%S")
+        })
+        if len(st.session_state.comment_history) > 50:
+            st.session_state.comment_history = st.session_state.comment_history[:50]
+
+        result = ""
+        for item in st.session_state.comment_history:
+            result += f"""
+                 {item['sentiment']}  | {item['comment']}
+            """
+
+        result += f""" Total comments: {len(st.session_state.comment_history)}"""
+
+        # Update the container
+        with output_container.container():
+            st.markdown(result)
 
     return write_comments
-
 
 def split_text(sentiment__text):
     sentiment, text = sentiment__text
@@ -198,26 +207,6 @@ def join_complete(all_words):
     return len(all_words) == 3
 
 
-def output_builder2(worker_index, worker_count):
-    placeholder = st.empty()
-
-    def write_to_dashboard(key__data):
-        key, data = key__data
-        with placeholder.container():
-            st.subheader(f"Sentiment Analysis Results for: {key}")  # Add a header
-
-            for sentiment, words in data.items():
-                st.write(f"**{sentiment.capitalize()} Words:**")  # Sentiment header
-
-                if words:  # Check if there are any words
-                    for word, count in words:
-                        st.write(f"- {word}: {count}")  # Display each word and count
-                else:
-                    st.write("  No significant words found for this sentiment.")
-                st.write("---")  # Separator between sentiments
-
-    return write_to_dashboard
-
 if __name__ == "__main__":
 
     st.title("Instagram Comments Analysis")
@@ -239,17 +228,7 @@ if __name__ == "__main__":
     flow.map(get_comment_sentiment)
     flow.inspect(print)
     flow.capture(ManualOutputConfig(output_builder1))
-    flow.flat_map(split_text)
-    flow.fold_window(
-        "count_words", 
-        cc, 
-        wc, 
-        builder = count_words, 
-        folder = count)
-    flow.map(sort_dict)
-    flow.reduce("join", join, join_complete)
-    flow.inspect(print)
-    flow.capture(ManualOutputConfig(output_builder2))
+
 
     search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
     
