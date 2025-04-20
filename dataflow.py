@@ -16,9 +16,15 @@ import streamlit as st
 import numpy as np
 from scipy.special import softmax
 import pandas as pd
+import json
+import requests
+from dotenv import load_dotenv
+import os
 
 from contractions import contractions
-from twitter import get_rules, delete_all_rules, get_stream, set_stream_rules
+
+# load environment variables
+load_dotenv()
 
 # load spacy stop words
 en = spacy.load('en_core_web_sm')
@@ -37,45 +43,80 @@ config = AutoConfig.from_pretrained(MODEL)
 # window size in minutes
 WINDOW_SIZE = 1
 
+# Instagram credentials
+INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
+
 # set up page details
 st.set_page_config(
-    page_title="Live Twitter Sentiment Analysis",
-    page_icon="🐝",
+    page_title="Live Instagram Comments Sentiment Analysis",
+    page_icon="📸",
     layout="wide",
 )
 
 
+def get_instagram_comments():
+    """
+    Get comments from Instagram
+    """
+    INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
+    # Get recent media posts first
+    url = "https://graph.instagram.com/me/media"
+    params = {
+        "fields": "id,caption,media_url,timestamp",
+        "access_token": INSTAGRAM_ACCESS_TOKEN,
+        "limit": 10  # Limit to most recent posts
+    }
+
+    response = requests.get(url, params=params)
+    media_data = response.json().get('data', [])
+    
+    comment_count = 0
+    
+    # Process each media post
+    for media in media_data:
+        media_id = media.get('id')
+        if not media_id:
+            continue
+            
+        # Get comments for this media post
+        comments_url = f"https://graph.instagram.com/{media_id}/comments"
+        comments_params = {
+            "fields": "text,timestamp",
+            "access_token": INSTAGRAM_ACCESS_TOKEN,
+            "limit": 50  # Fetch up to 50 comments per post
+        }
+        
+        comments_response = requests.get(comments_url, params=comments_params)
+        comments_data = comments_response.json().get('data', [])
+        
+        for comment in comments_data:
+            comment_count += 1
+            # Yield the comment text
+            yield comment_count, comment.get("text", "")
+
+
 def input_builder(worker_index, worker_count, resume_state):
-    return get_stream()
+    return get_instagram_comments()
 
 
-def remove_username(tweet):
+def clean_comment(comment):
     """
-    Remove all the @usernames in a tweet
-    :param tweet:
-    :return: tweet without @username
+    Removes spaces and special characters from a comment
+    :param comment:
+    :return: clean comment
     """
-    return re.sub('@[\w]+', '', tweet)
+    comment = comment.lower()
+    comment = re.sub(pattern, lambda g: contractions[g.group(0)], comment)
+    return ' '.join(re.sub("(@[A-Za-z0-9]+)|([^0-9A-Za-z \t])|(\w+:\/\/\S+)", " ", comment).split())
 
 
-def clean_tweet(tweet):
+def get_comment_sentiment(comment):
     """
-    Removes spaces and special characters to a tweet
-    :param tweet:
-    :return: clean tweet
+    Determines the sentiment of a comment whether positive, negative or neutral
+    :param comment:
+    :return: sentiment and the comment
     """
-    tweet = tweet.lower()
-    tweet = re.sub(pattern, lambda g: contractions[g.group(0)], tweet)
-    return ' '.join(re.sub("(@[A-Za-z0-9]+)|([^0-9A-Za-z \t])|(\w+:\/\/\S+)", " ", tweet).split())
-
-
-def get_tweet_sentiment(tweet):
-    """
-    Determines the sentiment of a tweet whether positive, negative or neutral
-    :param tweet:
-    :return: sentiment and the tweet
-    """
-    encoded_input = tokenizer(tweet, return_tensors='pt')
+    encoded_input = tokenizer(comment, return_tensors='pt')
     output = model(**encoded_input)
     scores = output[0][0].detach().numpy()
     scores = softmax(scores)
@@ -84,16 +125,16 @@ def get_tweet_sentiment(tweet):
     sentiment_class = config.id2label[ranked[0]]
     sentiment_score = scores[ranked[0]]
 
-    return sentiment_class, tweet
+    return sentiment_class, comment
 
 
 def output_builder1(worker_index, worker_count):
     con = st.empty()
-    def write_tweets(sentiment__tweet):
-        sentiment, tweet = sentiment__tweet
-        con.write(f'sentiment:{sentiment}, tweet:{tweet}')
+    def write_comments(sentiment__comment):
+        sentiment, comment = sentiment__comment
+        con.write(f'sentiment: {sentiment}, comment: {comment}')
 
-    return write_tweets
+    return write_comments
 
 
 def split_text(sentiment__text):
@@ -153,14 +194,13 @@ def output_builder2(worker_index, worker_count):
 
 if __name__ == "__main__":
 
-    st.title("Twitter Analysis")
+    st.title("Instagram Comments Analysis")
 
     flow = Dataflow()
     flow.input("input", ManualInputConfig(input_builder))
-    flow.map(remove_username)
-    flow.map(clean_tweet)
+    flow.map(clean_comment)
     flow.inspect(print)
-    flow.map(get_tweet_sentiment)
+    flow.map(get_comment_sentiment)
     flow.inspect(print)
     flow.capture(ManualOutputConfig(output_builder1))
     flow.flat_map(split_text)
@@ -175,11 +215,11 @@ if __name__ == "__main__":
     flow.inspect(print)
     flow.capture(ManualOutputConfig(output_builder2))
 
-    search_terms = [st.text_input('Enter your search terms')]
-    print(search_terms)
-
-    if st.button("Click to Start Analyzing Tweets"):
-        rules = get_rules()
-        delete = delete_all_rules(rules)
-        set_stream_rules(search_terms)
+    search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
+    
+    if st.button("Click to Start Analyzing Instagram Comments"):
+        # Set the Instagram token from .env or let the user input it if not found
+        if not INSTAGRAM_ACCESS_TOKEN:
+            st.warning("No Instagram access token found in environment. Please add it to your .env file.")
+            INSTAGRAM_ACCESS_TOKEN = st.text_input("Enter your Instagram access token:")
         run_main(flow)
