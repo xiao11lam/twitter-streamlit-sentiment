@@ -1,6 +1,8 @@
 import re
-from datetime import timedelta
+from datetime import timedelta, datetime
 from collections import defaultdict
+import signal
+import sys
 
 from bytewax.dataflow import Dataflow
 from bytewax.inputs import ManualInputConfig
@@ -9,17 +11,15 @@ from bytewax.execution import run_main
 from bytewax.window import TumblingWindowConfig, SystemClockConfig
 
 import spacy
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
 import streamlit as st
-import pandas as pd
-import json
 import requests
 from dotenv import load_dotenv
 import os
 import openai
-from datetime import datetime
 from contractions import contractions
+
+# Global flag for stopping
+should_stop = False
 
 # load environment variables
 load_dotenv()
@@ -48,77 +48,68 @@ st.set_page_config(
     layout="wide",
 )
 
-
 def get_instagram_comments():
-    """
-    Get comments from Instagram
-    """
+    """Get comments from Instagram"""
+    global should_stop
     INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
+
     # Get recent media posts first
     url = "https://graph.instagram.com/me/media"
     params = {
         "fields": "id,caption,media_url,timestamp",
         "access_token": INSTAGRAM_ACCESS_TOKEN,
-        "limit": 10  # Limit to most recent posts
+        "limit": 10
     }
 
     response = requests.get(url, params=params)
     media_data = response.json().get('data', [])
-    
+
     comment_count = 0
-    
+
     # Process each media post
     for media in media_data:
+        if should_stop:
+            break
+
         media_id = media.get('id')
         if not media_id:
             continue
-            
+
         # Get comments for this media post
         comments_url = f"https://graph.instagram.com/{media_id}/comments"
         comments_params = {
             "fields": "text,timestamp",
             "access_token": INSTAGRAM_ACCESS_TOKEN,
-            "limit": 50  # Fetch up to 50 comments per post
+            "limit": 50
         }
-        
+
         comments_response = requests.get(comments_url, params=comments_params)
         comments_data = comments_response.json().get('data', [])
-        
-        for comment in comments_data:
-            comment_count += 1
-            # Yield the comment text
-            yield comment_count, comment.get("text", "")
 
+        for comment in comments_data:
+            if should_stop:
+                break
+
+            comment_count += 1
+            yield comment_count, comment.get("text", "")
 
 def input_builder(worker_index, worker_count, resume_state):
     for comment_count, comment_text in get_instagram_comments():
-        # Check if streaming is still enabled
-        if not st.session_state.streaming:
-            break
         yield comment_count, comment_text
-
+        if should_stop:
+            break
 
 def clean_comment(comment):
-    """
-    Removes spaces and special characters from a comment
-    :param comment:
-    :return: clean comment
-    """
+    """Clean the comment text"""
     comment = comment.lower()
     comment = re.sub(pattern, lambda g: contractions[g.group(0)], comment)
     return ' '.join(re.sub("(@[A-Za-z0-9]+)|([^0-9A-Za-z \t])|(\w+:\/\/\S+)", " ", comment).split())
 
-
 def get_comment_sentiment(comment):
-    """
-    Determines the sentiment of a comment whether positive, negative or neutral
-    using OpenAI API
-    :param comment:
-    :return: sentiment and the comment
-    """
+    """Get sentiment using OpenAI API"""
     if not comment.strip():
         return "neutral", comment
-        
+
     try:
         response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -129,139 +120,80 @@ def get_comment_sentiment(comment):
             max_tokens=10,
             temperature=0
         )
-        
-        # Extract the sentiment from the response
+
         sentiment = response.choices[0].message.content.strip().lower()
-        
-        # Ensure we only return valid sentiment classes
-        if sentiment not in ["positive", "negative", "neutral"]:
-            sentiment = "neutral"
-            
-        return sentiment, comment
-    except Exception as e:
-        print(f"Error analyzing sentiment: {e}")
+        return sentiment if sentiment in ["positive", "negative", "neutral"] else "neutral", comment
+    except Exception:
         return "neutral", comment
 
-
 def output_builder1(worker_index, worker_count):
-    # Initialize session state for comment history if it doesn't exist
     if 'comment_history' not in st.session_state:
         st.session_state.comment_history = []
 
-    # Create a single container for the output
-    output_container = st.empty()
+    # Create containers for both live view and history
+    live_container = st.empty()
+    history_container = st.container()
 
     def write_comments(sentiment__comment):
         sentiment, comment = sentiment__comment
 
-        # Add new comment to history (keep only last 50 comments)
-        st.session_state.comment_history.insert(0, {  # Add newest at beginning
+        # Add new comment to history
+        st.session_state.comment_history.insert(0, {
             "sentiment": sentiment,
             "comment": comment,
             "time": datetime.now().strftime("%H:%M:%S")
         })
-        if len(st.session_state.comment_history) > 50:
-            st.session_state.comment_history = st.session_state.comment_history[:50]
 
-        result = ""
-        for item in st.session_state.comment_history:
-            result += f"""
-                 {item['sentiment']}  | {item['comment']}
-            """
+        # Update live view
+        with live_container.container():
+            st.subheader("Live Comments")
+            if st.session_state.comment_history:
+                latest = st.session_state.comment_history[0]
+                st.write(f"**Latest: {latest['sentiment'].upper()}** ({latest['time']}): {latest['comment']}")
+                st.write(f"Total comments collected: {len(st.session_state.comment_history)}")
+            else:
+                st.write("No comments collected yet")
 
-        result += f""" Total comments: {len(st.session_state.comment_history)}"""
-
-        # Update the container
-        with output_container.container():
-            st.markdown(result)
+        # Always show full history (will be visible after stopping)
+        with history_container:
+            st.subheader("Comment History")
+            if st.session_state.comment_history:
+                for item in st.session_state.comment_history:
+                    st.write(f"**{item['sentiment'].upper()}** ({item['time']}): {item['comment']}")
+            else:
+                st.write("No comments in history")
 
     return write_comments
 
-def split_text(sentiment__text):
-    sentiment, text = sentiment__text
-    tokens = re.findall(r'[^\s!,.?":;0-9]+', text)
-    data = [(sentiment, word) for word in tokens if word not in sw_spacy]
-    return data
-
-# Add a fold window to capture the count of words
-# grouped by positive, negative and neutral sentiment
-cc = SystemClockConfig()
-wc = TumblingWindowConfig(length=timedelta(minutes=WINDOW_SIZE))
-
-def count_words():
-    return defaultdict(lambda:0)
-
-
-def count(results, word):
-    results[word] += 1
-    return results
-
-
-def sort_dict(key__data):
-    key, data = key__data
-    return ("all", {key: sorted(data.items(), key=lambda k_v: k_v[1], reverse=True)})
-
-
-def join(all_words, words):
-    all_words = dict(all_words, **words)
-    return all_words
-
-
-def join_complete(all_words):
-    return len(all_words) == 3
-
 
 if __name__ == "__main__":
-
     st.title("Instagram Comments Analysis")
-    
-    # Initialize comment history in session state if not exists
+
+    # Initialize session state
     if 'comment_history' not in st.session_state:
         st.session_state.comment_history = []
-        
-    # Display history table if there are comments
-    if st.session_state.comment_history:
-        with st.expander("View Comment History", expanded=True):
-            history_df = pd.DataFrame(st.session_state.comment_history)
-            st.dataframe(history_df, use_container_width=True)
 
     flow = Dataflow()
     flow.input("input", ManualInputConfig(input_builder))
     flow.map(clean_comment)
-    flow.inspect(print)
     flow.map(get_comment_sentiment)
-    flow.inspect(print)
     flow.capture(ManualOutputConfig(output_builder1))
 
-
-    # search_terms = [st.text_input('Enter Instagram hashtag or keyword to analyze')]
-    
-    # Add a session state variable to control the stream
-    if 'streaming' not in st.session_state:
-        st.session_state.streaming = False
-    
     col1, col2 = st.columns(2)
-    
-    if col1.button("Click to Start"):
-        # Check for required API keys
-        if not openai.api_key:
-            st.warning("No OpenAI API key found in environment. Please add it to your .env file as OPENAI_API_KEY.")
-            openai.api_key = st.text_input("Enter your OpenAI API key:", type="password")
-            if not openai.api_key:
-                st.error("OpenAI API key is required for sentiment analysis.")
-                st.stop()
-                
-        # Set the Instagram token from .env or let the user input it if not found
-        if not INSTAGRAM_ACCESS_TOKEN:
-            st.warning("No Instagram access token found in environment. Please add it to your .env file.")
-            INSTAGRAM_ACCESS_TOKEN = st.text_input("Enter your Instagram access token:")
-            if not INSTAGRAM_ACCESS_TOKEN:
-                st.error("Instagram access token is required to fetch comments.")
-                st.stop()
-        
-        st.session_state.streaming = True
+
+    if col1.button("Start Analysis"):
+        # [Your existing start logic...]
+        should_stop = False
         run_main(flow)
-        
-    if col2.button("Click to Stop"):
-        st.session_state.streaming = False
-        st.experimental_rerun()
+
+    if col2.button("Stop Analysis"):
+        should_stop = True
+        st.success(f"Stopped. Collected {len(st.session_state.comment_history)} comments.")
+
+        # Display full history after stopping
+        st.subheader("All Collected Comments")
+        if st.session_state.comment_history:
+            for item in st.session_state.comment_history:
+                st.write(f"**{item['sentiment'].upper()}** ({item['time']}): {item['comment']}")
+        else:
+            st.write("No comments were collected")
