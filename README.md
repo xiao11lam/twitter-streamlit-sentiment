@@ -285,3 +285,34 @@ This article introduced Bytewax and the Twitter API. You learned to process twee
 Bytewax can help you perform real-time analytics on data and much more. The library is robust and allows for parallelism, iterations, and scalability. Bytewax has a very well-documented API that can be found [here](https://docs.bytewax.io/apidocs). Get started today!
 
 Give us a star on [GitHub](https://github.com/bytewax/bytewax) to support the project!
+
+
+
+## Running the Application
+
+1. Start the Streamlit application:
+   ```bash
+   streamlit run dataflow.py
+   ```
+
+2. Open your browser and navigate to http://localhost:8501
+
+3. Enter your search terms in the input field and click "Click to Start Analyzing Tweets"
+
+4. The application will display tweets and their sentiment analysis in real-time
+
+## Docker Support
+
+If you prefer to run the application in a Docker container:
+
+```bash
+docker build -t twitter-sentiment .
+docker run -p 8501:8501 -e TWITTER_BEARER_TOKEN=your_twitter_bearer_token twitter-sentiment
+```
+
+## Project Structure
+
+- `dataflow.py`: Main application with Streamlit interface and Bytewax dataflow
+- `twitter.py`: Twitter API integration
+- `contractions.py`: Helper module for text preprocessing
+- `requirements.txt`: Project dependencies

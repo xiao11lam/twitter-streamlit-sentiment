@@ -14,7 +14,6 @@ COPY . .
 
 RUN pip3 install --default-timeout=900 transformers[torch]==4.21.2
 RUN pip3 install -r requirements.txt
-
 RUN python3 -m spacy download en_core_web_sm
 
 # Load the BERT model from Huggingface and store it in the model directory
