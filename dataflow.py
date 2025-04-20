@@ -108,23 +108,23 @@ def clean_comment(comment):
 def get_comment_sentiment(comment):
     """Get sentiment using OpenAI API"""
     if not comment.strip():
-        return "neutral", comment
+        return "no", comment
 
     try:
         response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a sentiment analysis tool. Analyze the sentiment of the following text and respond with exactly one word: 'positive', 'negative', or 'neutral'."},
+                {"role": "system", "content": "You are a sentiment analysis tool. Analyze the sentiment of the following text and respond with exactly one word, yes means here the it is hateful language, no means this is not hateful comment: 'Yes', 'No'."},
                 {"role": "user", "content": comment}
             ],
-            max_tokens=10,
+            # max_tokens=10,
             temperature=0
         )
 
         sentiment = response.choices[0].message.content.strip().lower()
-        return sentiment if sentiment in ["positive", "negative", "neutral"] else "neutral", comment
+        return sentiment if sentiment in ["yes", "no"] else "no", comment
     except Exception:
-        return "neutral", comment
+        return "no", comment
 
 def output_builder1(worker_index, worker_count):
     if 'comment_history' not in st.session_state:
@@ -139,27 +139,27 @@ def output_builder1(worker_index, worker_count):
 
         # Add new comment to history
         st.session_state.comment_history.insert(0, {
-            "sentiment": sentiment,
+            "hateful": sentiment,
             "comment": comment,
             "time": datetime.now().strftime("%H:%M:%S")
         })
 
         # Update live view
         with live_container.container():
-            st.subheader("Live Comments")
             if st.session_state.comment_history:
                 latest = st.session_state.comment_history[0]
-                st.write(f"**Latest: {latest['sentiment'].upper()}** ({latest['time']}): {latest['comment']}")
+                hateful_status = "HATEFUL" if latest['hateful'] == "yes" else "NOT HATEFUL"
+                st.write(f"**Latest: {hateful_status}** ({latest['time']}): {latest['comment']}")
                 st.write(f"Total comments collected: {len(st.session_state.comment_history)}")
             else:
                 st.write("No comments collected yet")
 
         # Always show full history (will be visible after stopping)
         with history_container:
-            st.subheader("Comment History")
             if st.session_state.comment_history:
                 for item in st.session_state.comment_history:
-                    st.write(f"**{item['sentiment'].upper()}** ({item['time']}): {item['comment']}")
+                    hateful_status = "HATEFUL" if item['hateful'] == "yes" else "NOT HATEFUL"
+                    st.write(f"**{hateful_status}** ({item['time']}): {item['comment']}")
             else:
                 st.write("No comments in history")
 
@@ -167,7 +167,7 @@ def output_builder1(worker_index, worker_count):
 
 
 if __name__ == "__main__":
-    st.title("Instagram Comments Analysis")
+    st.title("Fendr Instagram Comments Analysis")
 
     # Initialize session state
     if 'comment_history' not in st.session_state:
@@ -191,9 +191,9 @@ if __name__ == "__main__":
         st.success(f"Stopped. Collected {len(st.session_state.comment_history)} comments.")
 
         # Display full history after stopping
-        st.subheader("All Collected Comments")
         if st.session_state.comment_history:
             for item in st.session_state.comment_history:
-                st.write(f"**{item['sentiment'].upper()}** ({item['time']}): {item['comment']}")
+                hateful_status = "HATEFUL" if item['hateful'] == "yes" else "NOT HATEFUL"
+                st.write(f"**{hateful_status}** ({item['time']}): {item['comment']}")
         else:
             st.write("No comments were collected")
